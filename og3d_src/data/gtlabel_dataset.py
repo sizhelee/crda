@@ -15,8 +15,6 @@ try:
 except:
     from common import pad_tensors, gen_seq_masks
 
-from random import random, shuffle
-
 
 ROTATE_ANGLES = [0, np.pi/2, np.pi, np.pi*3/2]
 
@@ -43,24 +41,25 @@ class GTLabelDataset(Dataset):
         self.scan_to_item_idxs = collections.defaultdict(list)
         with jsonlines.open(anno_file, 'r') as f:
             for item in f:
-                if item['negative']:
-                    if not cfg.use_negative:
-                        continue
-                    elif random() > 0.25:
-                        continue
+                # if not cfg.use_negative:
+                #     if item['negative']:
+                #         continue
                 if item['scan_id'] in split_scan_ids:
                     if (len(item['tokens']) > 24) and (not item['item_id'].startswith('scanrefer')): continue
                     # if not is_explicitly_view_dependent(item['tokens']): continue
                     self.scan_ids.add(item['scan_id'])
                     self.scan_to_item_idxs[item['scan_id']].append(len(self.data))
-                    item["feats"] = np.load("/home/lisizhe/vil3dref/og3d_src/obj_feats/{}.npy".format(item['item_id']))
+                    try:
+                        item["feats"] = np.load("/home/lisizhe/vil3dref/og3d_src/obj_feats/{}.npy".format(item['item_id']))
+                    except:
+                        item['feats'] = None
                     self.data.append(item)       
 
         self.scans = {}
         for scan_id in self.scan_ids:
-            inst_labels = json.load(open(os.path.join(scan_dir, 'instance_id_to_name', '%s.json'%scan_id)))
-            inst_locs = np.load(os.path.join(scan_dir, 'instance_id_to_loc', '%s.npy'%scan_id))
-            inst_colors = json.load(open(os.path.join(scan_dir, 'instance_id_to_gmm_color', '%s.json'%scan_id)))
+            inst_labels = json.load(open(os.path.join(scan_dir, 'instance_id_to_name_pred', '%s.json'%scan_id)))
+            inst_locs = np.load(os.path.join(scan_dir, 'instance_id_to_loc_pred', '%s.npy'%scan_id))
+            inst_colors = json.load(open(os.path.join(scan_dir, 'instance_id_to_gmm_color_pred', '%s.json'%scan_id)))
             inst_colors = [np.concatenate(
                 [np.array(x['weights'])[:, None], np.array(x['means'])],
                 axis=1
@@ -70,6 +69,20 @@ class GTLabelDataset(Dataset):
                 'inst_locs': inst_locs,     # (n_obj, 6) center xyz, whl
                 'inst_colors': inst_colors, # (n_obj, 3x4) cluster * (weight, mean rgb)
             }
+        if self.gt_scan_dir is not None:
+            for scan_id in self.scan_ids:
+                inst_labels = json.load(open(os.path.join(gt_scan_dir, 'instance_id_to_name', '%s.json'%scan_id)))
+                inst_locs = np.load(os.path.join(gt_scan_dir, 'instance_id_to_loc', '%s.npy'%scan_id))
+                inst_colors = json.load(open(os.path.join(gt_scan_dir, 'instance_id_to_gmm_color', '%s.json'%scan_id)))
+                inst_colors = [np.concatenate(
+                    [np.array(x['weights'])[:, None], np.array(x['means'])],
+                    axis=1
+                ).astype(np.float32) for x in inst_colors]
+                self.scans[scan_id].update({
+                    'gt_inst_labels': inst_labels, # (n_obj, )
+                    'gt_inst_locs': inst_locs,     # (n_obj, 6) center xyz, whl
+                    'gt_inst_colors': inst_colors, # (n_obj, 3x4) cluster * (weight, mean rgb)
+                })
 
         self.int2cat = json.load(open(category_file, 'r'))
         self.cat2int = {w: i for i, w in enumerate(self.int2cat)}
@@ -93,7 +106,7 @@ class GTLabelDataset(Dataset):
                     else:
                         remained_obj_idxs.append(kobj)
             if len(selected_obj_idxs) < self.max_obj_len:
-                shuffle(remained_obj_idxs)
+                random.shuffle(remained_obj_idxs)
                 selected_obj_idxs += remained_obj_idxs[:self.max_obj_len - len(selected_obj_idxs)]
             obj_labels = [obj_labels[i] for i in selected_obj_idxs]
             obj_locs = [obj_locs[i] for i in selected_obj_idxs]
@@ -123,9 +136,6 @@ class GTLabelDataset(Dataset):
         # txt data
         txt_tokens = torch.LongTensor(item['enc_tokens'][:self.max_txt_len])
         txt_lens = len(txt_tokens)
-
-        txt_tokens_mask = torch.LongTensor(item['enc_tokens_mask'][:self.max_txt_len])
-        txt_lens_mask = len(txt_tokens_mask)
         
         # obj data
         if self.gt_scan_dir is None or item['max_iou'] > self.iou_replace_gt:
@@ -161,24 +171,18 @@ class GTLabelDataset(Dataset):
 
         aug_obj_locs = torch.from_numpy(aug_obj_locs)
         aug_obj_colors = torch.from_numpy(aug_obj_colors)
+        print(aug_obj_labels)
         aug_obj_classes = torch.LongTensor([self.cat2int[x] for x in aug_obj_labels])
         if self.cat2vec is None:
             aug_obj_fts = aug_obj_classes
         else:
             aug_obj_fts = torch.FloatTensor([self.cat2vec[x] for x in aug_obj_labels])
-
-        if 'negative' in item.keys():
-            negative = item['negative']
-        else:
-            negative = 0
                 
         outs = {
             'item_ids': item['item_id'],
             'scan_ids': scan_id,
             'txt_ids': txt_tokens,
             'txt_lens': txt_lens,
-            'txt_ids_mask': txt_tokens_mask, 
-            'txt_lens_mask': txt_lens_mask, 
             'obj_fts': aug_obj_fts,
             'obj_locs': aug_obj_locs,
             'obj_colors': aug_obj_colors,
@@ -187,8 +191,6 @@ class GTLabelDataset(Dataset):
             'tgt_obj_idxs': aug_tgt_obj_idx,
             'tgt_obj_classes': self.cat2int[tgt_obj_type],
             'obj_ids': aug_obj_ids,
-            'change': 0, 
-            'negative': negative,
         }
 
         return outs
@@ -199,11 +201,8 @@ def gtlabel_collate_fn(data):
         outs[key] = [x[key] for x in data]
 
     outs['txt_ids'] = pad_sequence(outs['txt_ids'], batch_first=True)
-    outs['txt_ids_mask'] = pad_sequence(outs['txt_ids_mask'], batch_first=True)
     outs['txt_lens'] = torch.LongTensor(outs['txt_lens'])
-    outs['txt_lens_mask'] = torch.LongTensor(outs['txt_lens_mask'])
     outs['txt_masks'] = gen_seq_masks(outs['txt_lens'])
-    outs['txt_masks_mask'] = gen_seq_masks(outs['txt_lens_mask'])
 
     if len(outs['obj_fts'][0].size()) == 1:
         outs['obj_fts'] = pad_sequence(outs['obj_fts'], batch_first=True)
@@ -219,11 +218,6 @@ def gtlabel_collate_fn(data):
     )
     outs['tgt_obj_idxs'] = torch.LongTensor(outs['tgt_obj_idxs'])
     outs['tgt_obj_classes'] = torch.LongTensor(outs['tgt_obj_classes'])
-
-    outs['change'] = torch.LongTensor(outs['change'])
-    if 'new_tgt_feats' in outs.keys():
-        outs['new_tgt_feats'] = torch.Tensor(outs['new_tgt_feats'])
-    outs['negative'] = torch.LongTensor(outs['negative'])
 
     return outs
 

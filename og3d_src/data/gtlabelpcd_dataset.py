@@ -37,6 +37,8 @@ class GTLabelPcdDataset(GTLabelDataset):
         if self.in_memory:
             for scan_id in self.scan_ids:
                 self.get_scan_pcd_data(scan_id)
+                if self.gt_scan_dir:
+                    self.get_scan_gt_pcd_data(scan_id)
 
         with open("./nr3d_vil3dref_10_val.json", "r", encoding='utf-8') as f:
             self.change_info = json.load(f)
@@ -54,7 +56,7 @@ class GTLabelPcdDataset(GTLabelDataset):
             return self.scans[scan_id]['pcds']
         
         pcd_data = torch.load(
-            os.path.join(self.scan_dir, 'pcd_with_global_alignment', '%s.pth'%scan_id)
+            os.path.join(self.scan_dir, 'pcd_with_global_alignment_pred', '%s.pth'%scan_id)
         )
         points, colors, ious = pcd_data[0], pcd_data[1], pcd_data[2]
         colors = colors / 127.5 - 1
@@ -91,7 +93,7 @@ class GTLabelPcdDataset(GTLabelDataset):
             self.scans[scan_id]['gt_pcds'] = obj_pcds
         return obj_pcds
 
-    def _get_obj_inputs(self, obj_pcds, obj_colors, obj_labels, obj_ids, tgt_obj_idx, theta=None):
+    def _get_obj_inputs(self, obj_pcds, obj_colors, obj_labels, obj_ids, tgt_obj_idx, obj_ious, obj_pcd_gt, theta=None):
         tgt_obj_type = obj_labels[tgt_obj_idx]
         if (self.max_obj_len is not None) and (len(obj_labels) > self.max_obj_len):
             selected_obj_idxs = [tgt_obj_idx]
@@ -109,6 +111,7 @@ class GTLabelPcdDataset(GTLabelDataset):
             obj_labels = [obj_labels[i] for i in selected_obj_idxs]
             obj_colors = [obj_colors[i] for i in selected_obj_idxs]
             obj_ids = [obj_ids[i] for i in selected_obj_idxs]
+            obj_ious = [obj_ious[i] for i in selected_obj_idxs]
             tgt_obj_idx = 0
 
         if (theta is not None) and (theta != 0):
@@ -146,11 +149,18 @@ class GTLabelPcdDataset(GTLabelDataset):
             obj_pcd[:, :3] = obj_pcd[:, :3] / max_dist
             obj_fts.append(obj_pcd)
 
+        if rot_matrix is not None:
+            obj_pcd_gt[:, :3] = np.matmul(obj_pcd_gt[:, :3], rot_matrix.transpose())
+        obj_center = obj_pcd_gt[:, :3].mean(0)
+        obj_size = obj_pcd_gt[:, :3].max(0) - obj_pcd_gt[:, :3].min(0)
+        obj_loc_gt = np.concatenate([obj_center, obj_size], 0)
+
         obj_fts = np.stack(obj_fts, 0)
         obj_locs = np.array(obj_locs)
         obj_colors = np.array(obj_colors)
+        obj_ious = np.array(obj_ious)
             
-        return obj_fts, obj_locs, obj_colors, obj_labels, obj_ids, tgt_obj_idx
+        return obj_fts, obj_locs, obj_colors, obj_labels, obj_ids, tgt_obj_idx, obj_ious, obj_loc_gt
 
     def __getitem__(self, idx):
         item = self.data[idx]
@@ -169,10 +179,23 @@ class GTLabelPcdDataset(GTLabelDataset):
             txt_tokens_mask = torch.LongTensor(item['enc_tokens'][:self.max_txt_len])
         txt_lens_mask = len(txt_tokens_mask)
 
-        if self.gt_scan_dir is None or item['max_iou'] > self.iou_replace_gt:
+        # if self.gt_scan_dir is None or item['max_iou'] > self.iou_replace_gt:
+        if True:
             obj_pcds = self.get_scan_pcd_data(scan_id)
+            obj_pcd_gt = self.get_scan_gt_pcd_data(scan_id)[tgt_obj_idx]
             obj_labels = self.scans[scan_id]['inst_labels']
             obj_gmm_colors = self.scans[scan_id]['inst_colors']
+
+            gt_inst_locs = self.scans[scan_id]['gt_inst_locs'][tgt_obj_idx]
+            max_iou, tgt_obj_idx = 0, 0
+            obj_ious = []
+            pred_inst_locs = self.scans[scan_id]['inst_locs']
+            for i in range(pred_inst_locs.shape[0]):
+                now_iou = calc_3diou(gt_inst_locs, pred_inst_locs[i])
+                obj_ious.append(now_iou)
+                if now_iou > max_iou:
+                    max_iou = now_iou
+                    tgt_obj_idx = i
 
         else:
             tgt_obj_idx = item['gt_target_id']
@@ -188,17 +211,13 @@ class GTLabelPcdDataset(GTLabelDataset):
             obj_pcds = [obj_pcds[i] for i in selected_obj_idxs]
             obj_gmm_colors = [obj_gmm_colors[i] for i in selected_obj_idxs]
             obj_ids = [obj_ids[i] for i in selected_obj_idxs]
+            obj_ious = [obj_ious[i] for i in selected_obj_idxs]
 
         if self.random_rotate:
             theta_idx = np.random.randint(len(ROTATE_ANGLES))
             theta = ROTATE_ANGLES[theta_idx]
         else:
             theta = 0
-
-        if 'negative' in item.keys():
-            negative = item['negative']
-        else:
-            negative = 0
 
         change_obj = 0
         if self.split == "train":
@@ -207,18 +226,11 @@ class GTLabelPcdDataset(GTLabelDataset):
             else:
                 self.idx_ls.append(idx)
 
-        if negative:
-            if random.random() > 0.5:
-                change_obj = 1
-                negative = 0
-
         if change_obj:
             if not tgt_obj_type in self.obj_feats_all.keys():
                 change_obj = 0
                 new_obj_fts = np.zeros(768)
             else:
-                # tgt_obj_type = random.choice(self.obj_feats_all.keys())
-                # negative = 1
                 feats_ls = random.sample(self.obj_feats_all[tgt_obj_type], min(10, len(self.obj_feats_all[tgt_obj_type])))
                 feats_ls = np.array(feats_ls).mean(0)
                 new_obj_fts = feats_ls
@@ -226,45 +238,94 @@ class GTLabelPcdDataset(GTLabelDataset):
             if "feats" in item.keys():
                 new_obj_fts = item["feats"]
             else:
-                new_obj_fts = np.zeros(768)
+                new_obj_fts = None
+
+        # if change_obj:
+        #     able_change = 1
+        #     for item_item in self.change_info:
+        #         item_id_now = item_item["item_id"]
+        #         if item_id_now != item_id:
+        #             continue
+        #         if len(item_item["change_list"]) == 0:
+        #             able_change = 0
+        #             break
+        #         scan_id_new, tgt_idx_new = random.choice(item_item["change_list"])
+
+        #         if scan_id_new != scan_id:
+
+        #             if self.val_dataset.gt_scan_dir is None or item_item['max_iou'] > self.val_dataset.iou_replace_gt:
+        #                 obj_pcds_new = self.val_dataset.get_scan_pcd_data(scan_id_new)
+        #                 obj_gmm_colors_new = self.val_dataset.scans[scan_id_new]['inst_colors']
+        #                 obj_labels_new = self.val_dataset.scans[scan_id_new]['inst_labels']
+        #             else:
+        #                 tgt_idx_new = item_item['gt_target_id']
+        #                 obj_pcds_new = self.val_dataset.get_scan_gt_pcd_data(scan_id_new)
+        #                 obj_gmm_colors_new = self.val_dataset.scans[scan_id_new]['gt_inst_colors']
+        #                 obj_labels_new = self.val_dataset.scans[scan_id_new]['gt_inst_labels']
+                
+        #         else:
+        #             if self.gt_scan_dir is None or item_item['max_iou'] > self.iou_replace_gt:
+        #                 obj_pcds_new = self.get_scan_pcd_data(scan_id_new)
+        #                 obj_gmm_colors_new = self.scans[scan_id_new]['inst_colors']
+        #                 obj_labels_new = self.scans[scan_id_new]['inst_labels']
+        #             else:
+        #                 tgt_idx_new = item_item['gt_target_id']
+        #                 obj_pcds_new = self.get_scan_gt_pcd_data(scan_id_new)
+        #                 obj_gmm_colors_new = self.scans[scan_id_new]['gt_inst_colors']
+        #                 obj_labels_new = self.scans[scan_id_new]['gt_inst_labels']
+
+
+        #         obj_pcds_safe = deepcopy(obj_pcds)
+        #         obj_pcds_safe[tgt_obj_idx] = change_xyz(obj_pcds_safe[tgt_obj_idx], obj_pcds_new[tgt_idx_new])
+        #         obj_gmm_colors_safe = deepcopy(obj_gmm_colors)
+        #         obj_gmm_colors_safe[tgt_obj_idx] = obj_gmm_colors_new[tgt_idx_new]
+        #         obj_labels_safe = deepcopy(obj_labels)
+        #         obj_labels_safe[tgt_obj_idx] = obj_labels_new[tgt_idx_new]
+
+        #         aug_obj_fts, aug_obj_locs, aug_obj_gmm_colors, aug_obj_labels, \
+        #             aug_obj_ids, aug_tgt_obj_idx = self._get_obj_inputs(
+        #                 obj_pcds_safe, obj_gmm_colors_safe, obj_labels_safe, obj_ids, tgt_obj_idx,
+        #                 theta=theta
+        #             )
+        #         break
+
+        #     if able_change == 0:
+        #         aug_obj_fts, aug_obj_locs, aug_obj_gmm_colors, aug_obj_labels, \
+        #             aug_obj_ids, aug_tgt_obj_idx = self._get_obj_inputs(
+        #                 obj_pcds, obj_gmm_colors, obj_labels, obj_ids, tgt_obj_idx,
+        #                 theta=theta
+        #             )
+
+        # else:
+        #     aug_obj_fts, aug_obj_locs, aug_obj_gmm_colors, aug_obj_labels, \
+        #         aug_obj_ids, aug_tgt_obj_idx = self._get_obj_inputs(
+        #             obj_pcds, obj_gmm_colors, obj_labels, obj_ids, tgt_obj_idx,
+        #             theta=theta
+        #         )
 
         aug_obj_fts, aug_obj_locs, aug_obj_gmm_colors, aug_obj_labels, \
-            aug_obj_ids, aug_tgt_obj_idx  = self._get_obj_inputs(
-                obj_pcds, obj_gmm_colors, obj_labels, obj_ids, tgt_obj_idx, 
+            aug_obj_ids, aug_tgt_obj_idx, aug_obj_ious, aug_obj_loc_gt = self._get_obj_inputs(
+                obj_pcds, obj_gmm_colors, obj_labels, obj_ids, tgt_obj_idx, obj_ious, obj_pcd_gt, 
                 theta=theta
             )
-
-        # anchor_pos = 0
-        # for i in range(len(aug_obj_labels)):
-        #     if aug_obj_labels[i] in item['utterance'].lower():
-        #         anchor_pos = i
-        #         break
-        # anchor_obj_type = aug_obj_labels[anchor_pos]
-        # if change_obj:
-        #     if not anchor_obj_type in self.obj_feats_all.keys():
-        #         change_obj = 0
-        #         new_obj_fts = np.zeros(768)
-        #     else:
-        #         anchor_obj_type = random.choice(self.obj_feats_all.keys())
-        #         negative = 1
-        #         feats_ls = random.sample(self.obj_feats_all[anchor_obj_type], min(10, len(self.obj_feats_all[anchor_obj_type])))
-        #         feats_ls = np.array(feats_ls).mean(0)
-        #         new_obj_fts = feats_ls
-        # else:
-        #     if "feats" in item.keys():
-        #         new_obj_fts = item["feats"]
-        #     else:
-        #         new_obj_fts = np.zeros(768)
 
         aug_obj_fts = torch.from_numpy(aug_obj_fts)
         aug_obj_locs = torch.from_numpy(aug_obj_locs)
         aug_obj_gmm_colors = torch.from_numpy(aug_obj_gmm_colors)
-        aug_obj_classes = torch.LongTensor([self.cat2int[x] for x in aug_obj_labels])
+        # aug_obj_classes = torch.LongTensor([self.cat2int[x] for x in aug_obj_labels])
+        aug_obj_classes = torch.LongTensor([int(x) for x in aug_obj_labels])
+        aug_obj_ious = torch.from_numpy(aug_obj_ious)
+        aug_obj_loc_gt = torch.from_numpy(aug_obj_loc_gt)
         
         if self.cat2vec is None:
             aug_obj_gt_fts = aug_obj_classes
         else:
-            aug_obj_gt_fts = torch.FloatTensor([self.cat2vec[x] for x in aug_obj_labels])
+            aug_obj_gt_fts = torch.FloatTensor([self.cat2vec[self.int2cat[int(x)]] for x in aug_obj_labels])
+
+        if 'negative' in item.keys():
+            negative = item['negative']
+        else:
+            negative = 0
 
         outs = {
             'item_ids': item['item_id'],
@@ -284,9 +345,11 @@ class GTLabelPcdDataset(GTLabelDataset):
             'obj_ids': aug_obj_ids,
             'change': change_obj,
             'negative': negative, 
-            # 'anchor': anchor_pos, 
+            'obj_ious': aug_obj_ious,  
+            'tgt_obj_locs_gt': aug_obj_loc_gt, 
         }
-        outs['new_tgt_feats'] = new_obj_fts
+        if new_obj_fts:
+            outs['new_tgt_feats'] = new_obj_fts
         return outs
 
 def gtlabelpcd_collate_fn(data):
@@ -308,18 +371,20 @@ def gtlabelpcd_collate_fn(data):
     outs['obj_lens'] = torch.LongTensor(outs['obj_lens'])
     outs['obj_masks'] = gen_seq_masks(outs['obj_lens'])
 
+    outs['obj_ious'] = pad_tensors(outs['obj_ious'], lens=outs['obj_lens'], pad=0)
+
     outs['obj_classes'] = pad_sequence(
         outs['obj_classes'], batch_first=True, padding_value=-100
     )
     outs['tgt_obj_idxs'] = torch.LongTensor(outs['tgt_obj_idxs'])
-    # outs['anchor'] = torch.LongTensor(outs['anchor'])
     outs['tgt_obj_classes'] = torch.LongTensor(outs['tgt_obj_classes'])
 
     outs['change'] = torch.LongTensor(outs['change'])
     if 'new_tgt_feats' in outs.keys():
         outs['new_tgt_feats'] = torch.Tensor(outs['new_tgt_feats'])
-    outs['negative'] = torch.LongTensor(outs['negative'])
 
+    outs['negative'] = torch.LongTensor(outs['negative'])
+    outs['tgt_obj_locs_gt'] = torch.stack(outs['tgt_obj_locs_gt'])
     return outs
 
 

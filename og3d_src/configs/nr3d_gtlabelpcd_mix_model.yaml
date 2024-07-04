@@ -27,7 +27,6 @@ model:
   dropout: 0.3
   num_obj_classes: 607
   teacher_eval_mode: false
-  use_mask_sent: false
   obj_encoder:
     # student
     sa_n_points: [32, 16, null]
@@ -64,14 +63,13 @@ model:
     obj3d_clf_pre: 1
     obj3d_reg: 0
     txt_clf: 1
-    negative_obj3d: 0.1
     distill_self_attns: 1
     distill_cross_attns: 1
     distill_hiddens: 0.02
 
 dataset:
   scan_dir: ../datasets/referit3d/scan_data
-  anno_file: ../datasets/referit3d/annotations/bert_tokenized/nr3d-negative.jsonl
+  anno_file: ../datasets/referit3d/annotations/bert_tokenized/nr3d-obj-noadj.jsonl
   category_file:  ../datasets/referit3d/annotations/meta_data/scannetv2_raw_categories.json
   # cat2vec_file: null
   cat2vec_file: ../datasets/referit3d/annotations/meta_data/cat2glove42b.json
@@ -86,5 +84,5 @@ dataset:
   keep_background: false
   random_rotate: true
 
-  use_negative: true
+    
 

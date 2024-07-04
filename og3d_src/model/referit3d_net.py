@@ -122,11 +122,10 @@ class ReferIt3DNet(nn.Module):
         if self.config.obj_encoder.freeze or self.config.obj_encoder.freeze_bn:
             freeze_bn(self.obj_encoder)
         obj_embeds = self.obj_encoder(batch['obj_fts'])
-        # # import pdb
-        # # pdb.set_trace()
+        # import pdb
+        # pdb.set_trace()
         if change and 'new_tgt_feats' in batch.keys():
             idxs_tmp = [[i for i in range(batch['obj_fts'].shape[0])],batch['tgt_obj_idxs'].cpu().numpy().tolist()]
-            # idxs_tmp = [[i for i in range(batch['obj_fts'].shape[0])],batch['anchor'].cpu().numpy().tolist()]
             change_obj = (batch['change']==1)
             change_obj = change_obj.cpu()
             idxs_tmp = (np.array(idxs_tmp)[:,change_obj]).tolist()
@@ -210,7 +209,7 @@ class ReferIt3DNet(nn.Module):
         og3d_logits = result['og3d_logits']
         og3d_logits_positive = og3d_logits[positive]
         tgt_obj_idxs_positive = batch['tgt_obj_idxs'][positive]
-
+        
         # og3d_loss = F.cross_entropy(result['og3d_logits'], batch['tgt_obj_idxs'])
         og3d_loss_positive = F.cross_entropy(og3d_logits_positive, tgt_obj_idxs_positive)
         losses['og3d'] = og3d_loss_positive
@@ -227,7 +226,7 @@ class ReferIt3DNet(nn.Module):
             gt_negative = torch.zeros_like(og3d_logits_negative).cuda()
             og3d_loss_negative = F.mse_loss(og3d_logits_negative, gt_negative)
             losses['og3d_negative'] = og3d_loss_negative * self.config.losses.negative_obj3d
-            # total_loss += og3d_loss_negative
+            total_loss += og3d_loss_negative
 
         if self.config.losses.obj3d_clf > 0:
             obj3d_clf_loss = F.cross_entropy(

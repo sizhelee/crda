@@ -41,7 +41,6 @@ def build_gtlabel_datasets(data_cfg):
         random_rotate=data_cfg.random_rotate,
         gt_scan_dir=data_cfg.get('gt_scan_dir', None),
         iou_replace_gt=data_cfg.get('iou_replace_gt', 0),
-        cfg=data_cfg
     )
     val_dataset = GTLabelDataset(
         data_cfg.val_scan_split, data_cfg.anno_file, 
@@ -52,7 +51,6 @@ def build_gtlabel_datasets(data_cfg):
         random_rotate=False,
         gt_scan_dir=data_cfg.get('gt_scan_dir', None),
         iou_replace_gt=data_cfg.get('iou_replace_gt', 0),
-        cfg=data_cfg
     )
     return trn_dataset, val_dataset
 
@@ -65,7 +63,6 @@ def build_gtpcd_datasets(data_cfg):
         max_txt_len=data_cfg.max_txt_len, max_obj_len=data_cfg.max_obj_len,
         keep_background=data_cfg.keep_background,
         num_points=data_cfg.num_points, in_memory=True,
-        cfg=data_cfg
     )
     val_dataset = GTPcdDataset(
         data_cfg.val_scan_split, data_cfg.anno_file, 
@@ -74,7 +71,6 @@ def build_gtpcd_datasets(data_cfg):
         max_txt_len=None, max_obj_len=None, random_rotate=False,
         keep_background=data_cfg.keep_background,
         num_points=data_cfg.num_points, in_memory=True,
-        cfg=data_cfg
     )
     return trn_dataset, val_dataset
 
@@ -215,7 +211,7 @@ def main(opts):
             batch_iter = tqdm(batch_iter)
         for batch in batch_iter:
             batch_size = len(batch['scan_ids'])
-            result, losses = model(batch, compute_loss=True, cfg=model_cfg)
+            result, losses = model(batch, compute_loss=True)
             losses['total'].backward()
 
             # optimizer update and logging
@@ -284,7 +280,7 @@ def validate(model, model_cfg, val_dataloader, niters=None, return_preds=False):
         result, losses = model(
             batch, compute_loss=True, is_test=True,
             output_attentions=output_attentions, 
-            output_hidden_states=False, cfg=model_cfg
+            output_hidden_states=False,
         )
 
         loss_dict = {'loss/%s'%lk: lv.data.item() for lk, lv in losses.items()}

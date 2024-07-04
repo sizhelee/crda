@@ -172,7 +172,7 @@ def main(opts):
         )
         pre_epoch = trn_sampler.set_epoch
 
-    change_sampler = ChangeSampler(trn_dataset, change_rate=0, use_data=1)
+    change_sampler = ChangeSampler(trn_dataset, change_rate=0.5, use_data=1)
     trn_dataloader = DataLoader(
         trn_dataset, batch_size=opts.batch_size, shuffle=True if change_sampler is None else False, 
         num_workers=opts.num_workers, collate_fn=collate_fn,
@@ -242,26 +242,7 @@ def main(opts):
             # pdb.set_trace()
             batch_size = len(batch['scan_ids'])
             result, losses = model(batch, compute_loss=True, cfg=model_cfg)
-            losses['total'].backward(retain_graph=True)
-
-            for p in model.student_model.txt_encoder.parameters():
-                p.requires_grad = True
-            for p in model.student_model.mm_encoder.parameters():
-                p.requires_grad = False
-            # for p in model.student_model.mm_encoder.layers[0].parameters():
-            #     p.requires_grad = True
-            for p in model.student_model.og3d_head.parameters():
-                p.requires_grad = False
-            
-            if 'og3d_negative' in losses.keys():
-                losses['og3d_negative'].backward()
-
-            for p in model.student_model.txt_encoder.parameters():
-                p.requires_grad = True
-            for p in model.student_model.mm_encoder.parameters():
-                p.requires_grad = True
-            for p in model.student_model.og3d_head.parameters():
-                p.requires_grad = True
+            losses['total'].backward()
 
             # optimizer update and logging
             global_step += 1
@@ -352,6 +333,17 @@ def validate(model, model_cfg, val_dataloader, niters=None, return_preds=False):
             n=batch_size
         )
 
+        idxs_tmp = [[i for i in range(batch['obj_fts'].shape[0])], og3d_preds.cpu().numpy().tolist()]
+        bbox_iou_preds = batch['obj_ious'][idxs_tmp]
+        avg_metrics['acc/iou25'].update(
+            (bbox_iou_preds >= 0.25).float().mean().item(),
+            n=batch_size
+        )
+        avg_metrics['acc/iou50'].update(
+            (bbox_iou_preds >= 0.5).float().mean().item(),
+            n=batch_size
+        )
+
         avg_metrics['acc/og3d_class'].update(
             torch.mean((batch['obj_classes'].gather(1, og3d_preds.unsqueeze(1)).squeeze(1) == batch['tgt_obj_classes']).float()).item(),
             n=batch_size
@@ -412,6 +404,7 @@ def validate(model, model_cfg, val_dataloader, niters=None, return_preds=False):
                 out_preds[batch['item_ids'][ib]] = {
                     'obj_ids': batch['obj_ids'][ib],
                     'obj_logits': result['og3d_logits'][ib, :batch['obj_lens'][ib]].data.cpu().numpy().tolist(),
+                    'obj_ious' : batch['obj_ious'][ib,  :batch['obj_lens'][ib]].data.cpu().numpy().tolist(), 
                 }
         if niters is not None and ib >= niters:
             break

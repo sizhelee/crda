@@ -76,6 +76,8 @@ dataset:
   # cat2vec_file: null
   cat2vec_file: ../datasets/referit3d/annotations/meta_data/cat2glove42b.json
 
+  gt_scan_dir: ../datasets/referit3d/scan_data
+
   trn_scan_split: ../datasets/referit3d/annotations/splits/scannetv2_train.txt
   val_scan_split: ../datasets/referit3d/annotations/splits/scannetv2_val.txt
   tst_scan_split: ../datasets/referit3d/annotations/splits/scannetv2_test.txt

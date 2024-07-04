@@ -26,7 +26,6 @@ model:
   hidden_size: 768
   dropout: 0.3
   num_obj_classes: 607
-  use_mask_sent: false
   obj_encoder:
     onehot_ft: false
     dim_ft: 300
@@ -57,7 +56,7 @@ model:
 
 dataset:
   scan_dir: ../datasets/referit3d/scan_data
-  anno_file: ../datasets/referit3d/annotations/bert_tokenized/nr3d-negative.jsonl
+  anno_file: ../datasets/referit3d/annotations/bert_tokenized/nr3d.jsonl
   category_file:  ../datasets/referit3d/annotations/meta_data/scannetv2_raw_categories.json
   cat2vec_file: ../datasets/referit3d/annotations/meta_data/cat2glove42b.json
 
@@ -69,5 +68,3 @@ dataset:
   max_obj_len: 80
   keep_background: false
   random_rotate: true
-
-  use_negative: false
