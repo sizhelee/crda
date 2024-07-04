@@ -44,9 +44,9 @@ python train_mix.py --config $configfile \
 
 2. The extire model
 
-    First use step 1 to gain the prediction of each branch. Then use the `/og3d_src/test_crda.py` to aggregrate the logits and get the final prediction.
+    First use step 1 to gain the prediction of each branch. Then use the `/og3d_src/test_crda.py` to aggregrate the logits and get the final prediction. The needed files in the test process can be found [here](https://drive.google.com/drive/folders/1WL5j_NgN2wtQTdkuFozOnlU7xDuogfnW?usp=sharing).
 
-* You can also use the pre-trained checkpoints to verify the results. (Overall Accuracy **65.78**)
+* You can also use the pre-trained checkpoints to verify the results. (Overall Accuracy **65.78** on Nr3D, iou@25 **47.23**, iou@50 **37.53** on ScanRefer)
 
     - `/data0/shared/lisizhe_tmp/vil3dref_result/datasets_vil3dref-0/exprs_neurips22/gtlabelpcd_mix/nr3d-aug0-masktxt/ckpts/model_epoch_98.pt`
 
