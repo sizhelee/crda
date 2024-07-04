@@ -21,6 +21,7 @@ class ReferIt3DNetMix(nn.Module):
         self.device = device
 
         self.teacher_eval_mode = config.get('teacher_eval_mode', False)
+        self.use_mask_sent = config.get('use_mask_sent', False)
 
         teacher_model_cfg = copy.deepcopy(config)
         teacher_model_cfg.model_type = 'gtlabel'
@@ -50,14 +51,24 @@ class ReferIt3DNetMix(nn.Module):
         if self.teacher_eval_mode:
             self.teacher_model.eval()
 
-        batch_teacher = {
-            'obj_fts': batch['obj_gt_fts'],
-            'obj_colors': batch['obj_colors'],
-            'obj_locs': batch['obj_locs'],
-            'obj_masks': batch['obj_masks'],
-            'txt_ids': batch['txt_ids'], 
-            'txt_masks': batch['txt_masks']
-        }
+        if self.use_mask_sent:
+            batch_teacher = {
+                'obj_fts': batch['obj_gt_fts'],
+                'obj_colors': batch['obj_colors'],
+                'obj_locs': batch['obj_locs'],
+                'obj_masks': batch['obj_masks'],
+                'txt_ids': batch['txt_ids_mask'], 
+                'txt_masks': batch['txt_masks']
+            }
+        else:
+            batch_teacher = {
+                'obj_fts': batch['obj_gt_fts'],
+                'obj_colors': batch['obj_colors'],
+                'obj_locs': batch['obj_locs'],
+                'obj_masks': batch['obj_masks'],
+                'txt_ids': batch['txt_ids'], 
+                'txt_masks': batch['txt_masks']
+            }
         teacher_outs = self.teacher_model(
             batch_teacher, compute_loss=False,
             output_attentions=True, output_hidden_states=True, cfg=cfg, 
